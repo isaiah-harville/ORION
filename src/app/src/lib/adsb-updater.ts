@@ -1,6 +1,6 @@
 import * as maplibregl from 'maplibre-gl';
-import { buildApiUrl } from '$lib/api';
-import { flightStore, type Flight } from '$lib/stores/flight-store';
+import { buildApiUrl } from '#lib/api.js';
+import { flightStore, type Flight } from '#lib/stores/flight-store.js';
 
 /**
  * Aircraft move fast enough that a minute-old position is visibly wrong, and

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type * as maplibregl from 'maplibre-gl';
-	import { loadFlightData, refreshForViewport, resetAdsbUpdater } from '$lib/adsb-updater';
+	import { loadFlightData, refreshForViewport, resetAdsbUpdater } from '#lib/adsb-updater.js';
 
 	let { map }: { map: maplibregl.Map } = $props();
 

@@ -2,9 +2,9 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { current_lat_long } from '$lib/stores/current-location';
-	import { layers_state } from '$lib/runes/toggleable-layers.svelte';
-	import { map_style_state } from '$lib/runes/map-style.svelte';
+	import { current_lat_long } from '#lib/stores/current-location.js';
+	import { layers_state } from '#lib/runes/toggleable-layers.svelte.js';
+	import { map_style_state } from '#lib/runes/map-style.svelte.js';
 	import type { Map } from 'maplibre-gl';
 	import { Button, Input, Select, Sheet, Switch, Tabs, Toolbar, toast } from '@sivir-ui/svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';

@@ -8,7 +8,6 @@ minimumReleaseAgeExclude:
   - '@lucide/svelte@1.37.0'
   - zod@4.5.4
 
-# @sveltejs/kit 2.x pins cookie ^0.6.0, which carries GHSA-pxg6-pf52-xh8x.
-# 0.7.0 is the fix and keeps the same API. Remove this when moving to Kit 3.
-overrides:
-  cookie@<0.7.0: 0.7.0
+peerDependencyRules:
+  allowedVersions:
+    '@sivir-ui/svelte>@sveltejs/kit': '^3.0.0'

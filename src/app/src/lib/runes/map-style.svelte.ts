@@ -1,4 +1,4 @@
-import { map_style_urls } from '$lib/map-styles';
+import { map_style_urls } from '#lib/map-styles.js';
 
 export function create_map_style_state() {
 	const storedStyle = localStorage.getItem('map_style');

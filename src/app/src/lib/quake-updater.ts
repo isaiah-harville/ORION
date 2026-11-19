@@ -1,6 +1,6 @@
 import * as maplibregl from 'maplibre-gl';
-import { buildApiUrl } from '$lib/api';
-import { quakeStore, type Quake } from '$lib/stores/quake-store';
+import { buildApiUrl } from '#lib/api.js';
+import { quakeStore, type Quake } from '#lib/stores/quake-store.js';
 
 /** USGS regenerates its summary feeds about once a minute. */
 const REFRESH_MS = 60_000;

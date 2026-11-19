@@ -1,4 +1,4 @@
-import { env } from '$env/dynamic/public';
+import { PUBLIC_ORION_API_URL } from '$app/env/public';
 
 /**
  * Base URL for the ORION API.
@@ -11,7 +11,7 @@ import { env } from '$env/dynamic/public';
  * API is on another origin, as it is when running the two dev servers.
  */
 export function apiBaseUrl(): string {
-	return env.PUBLIC_ORION_API_URL || '/api';
+	return PUBLIC_ORION_API_URL;
 }
 
 export function buildApiUrl(pathOrUrl: string, apiBase = apiBaseUrl()): string {

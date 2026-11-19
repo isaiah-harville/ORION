@@ -1,4 +1,4 @@
-import type { RadarTimestamp } from '$types';
+import type { RadarTimestamp } from '#lib/types/index.js';
 
 export type CurrentRadar = {
 	timestamp?: number;

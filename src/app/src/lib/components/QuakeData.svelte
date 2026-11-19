@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { quakeStore, type Quake } from '$lib/stores/quake-store';
-	import { markerColor } from '$lib/quake-updater';
-	import { flyAndScale } from '$lib/utils';
+	import { quakeStore, type Quake } from '#lib/stores/quake-store.js';
+	import { markerColor } from '#lib/quake-updater.js';
+	import { flyAndScale } from '#lib/utils.js';
 	import X from '@lucide/svelte/icons/x';
 
 	let selectedQuake: Quake | null = $state(null);
