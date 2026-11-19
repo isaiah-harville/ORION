@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadQuakeData, resetQuakeUpdater, markerSize, markerColor } from '$lib/quake-updater';
-import { quakeStore } from '$lib/stores/quake-store';
+import { loadQuakeData, resetQuakeUpdater, markerSize, markerColor } from '#lib/quake-updater.js';
+import { quakeStore } from '#lib/stores/quake-store.js';
 import type { Mock } from 'vitest';
 import * as maplibregl from 'maplibre-gl';
 
-vi.mock('$lib/stores/quake-store', () => ({ quakeStore: { update: vi.fn() } }));
+vi.mock('#lib/stores/quake-store.js', () => ({ quakeStore: { update: vi.fn() } }));
 vi.mock('maplibre-gl', () => {
 	class MockMarker {
 		_element: HTMLElement;

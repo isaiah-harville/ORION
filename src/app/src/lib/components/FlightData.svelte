@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { flightStore, type Flight } from '$lib/stores/flight-store';
-	import { markerColor, label } from '$lib/adsb-updater';
-	import { flyAndScale } from '$lib/utils';
+	import { flightStore, type Flight } from '#lib/stores/flight-store.js';
+	import { markerColor, label } from '#lib/adsb-updater.js';
+	import { flyAndScale } from '#lib/utils.js';
 	import X from '@lucide/svelte/icons/x';
 
 	let selectedFlight: Flight | null = $state(null);

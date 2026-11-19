@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { Toaster } from '@sivir-ui/svelte';
-	import Map from '$lib/components/Map.svelte';
+	import Map from '#lib/components/Map.svelte';
 
 	let { children } = $props();
 </script>

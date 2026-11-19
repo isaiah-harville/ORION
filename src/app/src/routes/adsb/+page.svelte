@@ -1,7 +1,7 @@
 <script lang="ts">
-	import FlightData from '$lib/components/FlightData.svelte';
+	import FlightData from '#lib/components/FlightData.svelte';
 	import { onMount } from 'svelte';
-	import { layers_state } from '$lib/runes/toggleable-layers.svelte';
+	import { layers_state } from '#lib/runes/toggleable-layers.svelte.js';
 
 	onMount(() => {
 		layers_state.data.quake_layer = false;

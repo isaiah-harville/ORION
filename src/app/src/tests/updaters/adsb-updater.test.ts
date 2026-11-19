@@ -8,12 +8,12 @@ import {
 	shortestTurn,
 	deadReckon,
 	stepAnimation
-} from '$lib/adsb-updater';
-import { flightStore, type Flight } from '$lib/stores/flight-store';
+} from '#lib/adsb-updater.js';
+import { flightStore, type Flight } from '#lib/stores/flight-store.js';
 import type { Mock } from 'vitest';
 import * as maplibregl from 'maplibre-gl';
 
-vi.mock('$lib/stores/flight-store', () => ({ flightStore: { update: vi.fn() } }));
+vi.mock('#lib/stores/flight-store.js', () => ({ flightStore: { update: vi.fn() } }));
 vi.mock('maplibre-gl', () => {
 	class MockMarker {
 		_element: HTMLElement;

@@ -1,5 +1,5 @@
-import { loadRadarData, resetRadarManifestCache, setRadarFramePosition } from '$lib/map-updater';
-import { radar_state } from '$lib/runes/current-radar.svelte';
+import { loadRadarData, resetRadarManifestCache, setRadarFramePosition } from '#lib/map-updater.js';
+import { radar_state } from '#lib/runes/current-radar.svelte.js';
 import type * as maplibregl from 'maplibre-gl';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 

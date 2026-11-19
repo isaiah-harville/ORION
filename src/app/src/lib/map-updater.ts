@@ -1,7 +1,7 @@
 import type * as maplibregl from 'maplibre-gl';
-import { apiBaseUrl, buildApiUrl } from '$lib/api';
-import { radar_state } from '$lib/runes/current-radar.svelte';
-import type { RadarManifest } from '$types';
+import { apiBaseUrl, buildApiUrl } from '#lib/api.js';
+import { radar_state } from '#lib/runes/current-radar.svelte.js';
+import type { RadarManifest } from '#lib/types/index.js';
 
 export const RADAR_LAYER_ID = 'radar-layer';
 /** Frames kept resident so playback crossfades instead of re-fetching tiles. */

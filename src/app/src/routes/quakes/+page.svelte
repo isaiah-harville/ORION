@@ -1,7 +1,7 @@
 <script lang="ts">
-	import QuakeData from '$lib/components/QuakeData.svelte';
+	import QuakeData from '#lib/components/QuakeData.svelte';
 	import { onMount } from 'svelte';
-	import { layers_state } from '$lib/runes/toggleable-layers.svelte';
+	import { layers_state } from '#lib/runes/toggleable-layers.svelte.js';
 
 	onMount(() => {
 		layers_state.data.adsb_layer = false;

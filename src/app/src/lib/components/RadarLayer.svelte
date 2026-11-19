@@ -10,10 +10,10 @@
 
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { buildApiUrl } from '$lib/api';
+	import { buildApiUrl } from '#lib/api.js';
 	import * as maplibregl from 'maplibre-gl';
-	import { current_lat_long } from '$lib/stores/current-location';
-	import radarIcon from '$lib/icons/radar-icon.png';
+	import { current_lat_long } from '#lib/stores/current-location.js';
+	import radarIcon from '#lib/icons/radar-icon.png';
 	import { toast } from '@sivir-ui/svelte';
 
 	const { map, onselect }: { map: maplibregl.Map; onselect: (radar: RadarStation) => void } =

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button, Skeleton, Slider } from '@sivir-ui/svelte';
-	import { cursor_data } from '$lib/runes/cursor.svelte';
-	import { radar_state } from '$lib/runes/current-radar.svelte';
+	import { cursor_data } from '#lib/runes/cursor.svelte.js';
+	import { radar_state } from '#lib/runes/current-radar.svelte.js';
 
 	let { center }: { center: { lat: number; lng: number } } = $props();
 

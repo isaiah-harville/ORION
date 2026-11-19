@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type * as maplibregl from 'maplibre-gl';
-	import { loadQuakeData, resetQuakeUpdater } from '$lib/quake-updater';
+	import { loadQuakeData, resetQuakeUpdater } from '#lib/quake-updater.js';
 
 	let { map }: { map: maplibregl.Map } = $props();
 

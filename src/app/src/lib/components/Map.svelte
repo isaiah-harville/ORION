@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { buildApiUrl } from '$lib/api';
+	import { buildApiUrl } from '#lib/api.js';
 	import { page } from '$app/state';
 	import * as maplibregl from 'maplibre-gl';
 	import type { StyleSpecification } from 'maplibre-gl';
@@ -9,28 +9,28 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
-	import { current_lat_long } from '$lib/stores/current-location';
+	import { current_lat_long } from '#lib/stores/current-location.js';
 	import {
 		loadRadarData,
 		RadarUnavailableError,
 		isRadarLayerId,
 		setRadarFramePosition
-	} from '$lib/map-updater';
-	import { radar_state } from '$lib/runes/current-radar.svelte';
+	} from '#lib/map-updater.js';
+	import { radar_state } from '#lib/runes/current-radar.svelte.js';
 	import ADSBLayer from './ADSBLayer.svelte';
 	import QuakeLayer from './QuakeLayer.svelte';
 	import CommandBar from './CommandBar.svelte';
 	import Scrubber from './Scrubber.svelte';
 	import StationInspector from './StationInspector.svelte';
 	import StatusCluster from './StatusCluster.svelte';
-	import { map_state } from '$lib/runes/map-state.svelte';
-	import { cursor_data } from '$lib/runes/cursor.svelte';
-	import { layers_state } from '$lib/runes/toggleable-layers.svelte';
+	import { map_state } from '#lib/runes/map-state.svelte.js';
+	import { cursor_data } from '#lib/runes/cursor.svelte.js';
+	import { layers_state } from '#lib/runes/toggleable-layers.svelte.js';
 
-	import NeonStyle from '$lib/styles/neon.json';
-	import DarkStyle from '$lib/styles/dark.json';
+	import NeonStyle from '#lib/styles/neon.json';
+	import DarkStyle from '#lib/styles/dark.json';
 
-	import { map_style_state } from '$lib/runes/map-style.svelte';
+	import { map_style_state } from '#lib/runes/map-style.svelte.js';
 	import RadarLayer, { type RadarStation } from './RadarLayer.svelte';
 
 	let map: maplibregl.Map | undefined = $state<maplibregl.Map | undefined>();
