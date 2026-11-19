@@ -5,7 +5,7 @@ description = "Observation, Reconnaissance, Intelligence, and Operations Network
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pillow>=12.3",
+    "pillow>=13.0",
 ]
 
 [dependency-groups]
