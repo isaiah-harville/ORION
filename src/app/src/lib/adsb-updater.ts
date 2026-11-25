@@ -1,6 +1,8 @@
-import * as maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
+import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { buildApiUrl } from '#lib/api.js';
-import { flightStore, type Flight } from '#lib/stores/flight-store.js';
+import { adsbCoverage, flightStore, type Flight } from '#lib/stores/flight-store.js';
+import { runWhenVisible } from '#lib/visibility.js';
 
 /**
  * Aircraft move fast enough that a minute-old position is visibly wrong, and
@@ -23,14 +25,53 @@ const CORRECTION_MS = 2_000;
  */
 const MAX_EXTRAPOLATION_MS = 60_000;
 
-/** The upstream will not search further than this from a point. */
-const MAX_RADIUS_NM = 250;
-const MIN_RADIUS_NM = 20;
-const METRES_PER_NM = 1852;
+/**
+ * How far ahead each aircraft's velocity leader reaches. At regional zoom a jet
+ * covers well under a pixel a second, so position alone reads as stationary;
+ * the leader shows where it will be in a minute, which makes speed and heading
+ * visible at any zoom.
+ */
+export const LEADER_MS = 60_000;
+/** Below this an aircraft is taxiing or parked; a leader would be noise. */
+const LEADER_MIN_KT = 30;
+
+/**
+ * Minimum time between redraws, by how much there is to draw and how far out
+ * the map is. Each redraw re-sends every aircraft to the map's worker. Zoomed
+ * in, that is a few hundred aircraft moving several pixels a second, so every
+ * display frame is worth drawing. Zoomed out to a whole region or country it
+ * can be thousands moving well under a pixel a second, so a few redraws a
+ * second look identical and cost a fraction as much.
+ */
+export function animationStepMs(zoom: number, count: number): number {
+	if (zoom < HEATMAP_UNTIL_ZOOM) return 1_000;
+	if (count > 3_000 || zoom < 7) return 250;
+	if (count > 1_500) return 50;
+	return 0;
+}
+
+/**
+ * Below this zoom, aircraft are shown as a traffic-density heatmap rather than
+ * individual glyphs: at continental scale thousands of overlapping planes are
+ * a solid smear, and density is what can actually be read there. The heatmap
+ * fades out and the glyphs fade in across the next zoom level.
+ */
+export const HEATMAP_UNTIL_ZOOM = 6;
+
+/** Poll sooner while the server is still filling a wide view in. */
+const PENDING_REFRESH_MS = 4_000;
+
 const MINUTES_PER_DEGREE = 60;
 
+export const AIRCRAFT_SOURCE = 'adsb-aircraft';
+export const LEADER_SOURCE = 'adsb-leaders';
+export const AIRCRAFT_LAYER = 'adsb-aircraft';
+export const LEADER_LAYER = 'adsb-leaders';
+export const HEATMAP_LAYER = 'adsb-heatmap';
+const AIRCRAFT_ICON = 'adsb-plane';
+
 interface Contact {
-	marker: maplibregl.Marker;
+	flight: Flight;
 	/** The last reported position, and when it arrived. */
 	reported: [number, number];
 	reportedAt: number;
@@ -48,31 +89,33 @@ interface Contact {
 
 let contacts: Record<string, Contact> = {};
 let timer: ReturnType<typeof setTimeout> | undefined;
+let cancelDeferred: (() => void) | undefined;
 let frame: number | undefined;
+let attachedMap: maplibregl.Map | undefined;
+let selectedId: string | null = null;
+let detachHandlers: (() => void) | undefined;
+/** Circles of the current view the server has not filled in yet. */
+let pending = 0;
 
-export function resetAdsbUpdater(): void {
+function cancelScheduled(): void {
 	if (timer !== undefined) clearTimeout(timer);
 	timer = undefined;
-	if (frame !== undefined) cancelAnimationFrame(frame);
-	frame = undefined;
-	Object.values(contacts).forEach((contact) => contact.marker.remove());
-	contacts = {};
+	cancelDeferred?.();
+	cancelDeferred = undefined;
 }
 
-/**
- * The radius that covers what the user is actually looking at.
- *
- * Unlike the earthquake feed, ADS-B is queried per point rather than globally,
- * so the viewport has to drive the query or a zoomed-out map shows a small disc
- * of traffic in the middle of an empty continent.
- */
-export function viewportRadiusNm(map: maplibregl.Map): number {
-	const bounds = map.getBounds();
-	const centre = bounds.getCenter();
-	// The corner is the furthest visible point, so covering it covers the rest.
-	const corner = new maplibregl.LngLat(bounds.getEast(), bounds.getNorth());
-	const nm = centre.distanceTo(corner) / METRES_PER_NM;
-	return Math.round(Math.max(MIN_RADIUS_NM, Math.min(MAX_RADIUS_NM, nm)));
+export function resetAdsbUpdater(): void {
+	cancelScheduled();
+	if (frame !== undefined) cancelAnimationFrame(frame);
+	frame = undefined;
+	detachHandlers?.();
+	detachHandlers = undefined;
+	if (attachedMap) removeLayers(attachedMap);
+	attachedMap = undefined;
+	contacts = {};
+	selectedId = null;
+	pending = 0;
+	adsbCoverage.set({ truncated: false, pending: 0, count: 0 });
 }
 
 /** Altitude bands, so a glance separates ground traffic from overflights. */
@@ -106,7 +149,7 @@ export function shortestTurn(from: number, to: number): number {
  * speed and track.
  *
  * Without this the display is a slideshow: reports arrive every fifteen seconds
- * and the server serves a cached copy for fifteen more, so a marker driven
+ * and the server serves a cached copy for fifteen more, so an aircraft drawn
  * straight off report positions sits perfectly still most of the time and then
  * jumps. Dead reckoning between reports is what makes the traffic move.
  */
@@ -154,73 +197,271 @@ function displayedTrack(contact: Contact, now: number): number {
 	return contact.track + contact.trackOffset * residual(contact, now);
 }
 
-function glyph(el: HTMLElement): SVGElement | null {
-	return el.firstElementChild as SVGElement | null;
+/**
+ * Every aircraft and its velocity leader where they are at `now`.
+ *
+ * Exported so tests can step time deterministically without a map.
+ */
+export function aircraftFeatures(
+	now: number = performance.now(),
+	withLeaders = true
+): {
+	aircraft: FeatureCollection<Point>;
+	leaders: FeatureCollection<LineString>;
+} {
+	const aircraft: Feature<Point>[] = [];
+	const leaders: Feature<LineString>[] = [];
+	for (const [id, contact] of Object.entries(contacts)) {
+		const position = displayedPosition(contact, now);
+		const track = displayedTrack(contact, now);
+		const color = markerColor(contact.flight);
+		aircraft.push({
+			type: 'Feature',
+			id,
+			geometry: { type: 'Point', coordinates: position },
+			properties: { id, color, track, selected: id === selectedId }
+		});
+		if (withLeaders && contact.speedKt >= LEADER_MIN_KT) {
+			leaders.push({
+				type: 'Feature',
+				geometry: {
+					type: 'LineString',
+					coordinates: [position, deadReckon(position, contact.speedKt, track, LEADER_MS)]
+				},
+				properties: { color }
+			});
+		}
+	}
+	return {
+		aircraft: { type: 'FeatureCollection', features: aircraft },
+		leaders: { type: 'FeatureCollection', features: leaders }
+	};
 }
 
-function element(flight: Flight): HTMLElement {
-	const el = document.createElement('button');
-	el.className = 'adsb-marker';
-	el.type = 'button';
-	el.innerHTML =
-		'<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">' +
-		'<path fill="currentColor" d="M12 2l1.6 6.5 7.4 3v2l-7.4-1.6-.9 5.3 2.8 2v1.8L12 20l-3.5 1-.0-1.8 2.8-2-.9-5.3L3 13.5v-2l7.4-3z"/>' +
-		'</svg>';
-	el.setAttribute('aria-label', `Aircraft ${label(flight)}`);
-	return el;
+/** Push the current positions to the map. Exported for tests. */
+export function stepAnimation(now: number = performance.now()): void {
+	const map = attachedMap;
+	if (!map || !ensureLayers(map)) return;
+	const { aircraft, leaders } = aircraftFeatures(now, map.getZoom() >= HEATMAP_UNTIL_ZOOM - 0.5);
+	(map.getSource(AIRCRAFT_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(aircraft);
+	(map.getSource(LEADER_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData(leaders);
 }
 
 /**
- * Draw one contact where it currently is.
- *
- * Position is written through the marker rather than by transforming the
- * element, because MapLibre owns that element's transform: anything written
- * there is overwritten on the next map move, which is what makes a
- * hand-transformed marker drift off its coordinates when the map is panned.
+ * A plane glyph as a signed-distance-field icon, so one image takes any colour
+ * through `icon-color` instead of one image per altitude band.
  */
-function render(contact: Contact, now: number): void {
-	contact.marker.setLngLat(displayedPosition(contact, now));
-	const svg = glyph(contact.marker.getElement());
-	if (svg) svg.style.transform = `rotate(${displayedTrack(contact, now).toFixed(1)}deg)`;
+function planeIcon(): ImageData | undefined {
+	if (typeof document === 'undefined' || typeof Path2D === 'undefined') return undefined;
+	const size = 48;
+	const canvas = document.createElement('canvas');
+	canvas.width = size;
+	canvas.height = size;
+	const context = canvas.getContext('2d');
+	if (!context) return undefined;
+	context.scale(size / 24, size / 24);
+	context.fillStyle = '#fff';
+	context.fill(
+		new Path2D(
+			'M12 2l1.6 6.5 7.4 3v2l-7.4-1.6-.9 5.3 2.8 2v1.8L12 20l-3.5 1v-1.8l2.8-2-.9-5.3L3 13.5v-2l7.4-3z'
+		)
+	);
+	return context.getImageData(0, 0, size, size);
 }
 
-/** Advance every contact. Exported so tests can step time deterministically. */
-export function stepAnimation(now: number = performance.now()): void {
-	for (const contact of Object.values(contacts)) render(contact, now);
+/**
+ * Add the aircraft sources and layers if they are missing. A base-style swap
+ * drops every source, so this is checked on each redraw rather than once.
+ * Returns false while the style is still loading.
+ */
+function ensureLayers(map: maplibregl.Map): boolean {
+	if (map.getSource(AIRCRAFT_SOURCE) && map.getLayer(AIRCRAFT_LAYER)) return true;
+	if (!map.isStyleLoaded()) return false;
+
+	const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
+	if (!map.hasImage(AIRCRAFT_ICON)) {
+		const icon = planeIcon();
+		if (icon) map.addImage(AIRCRAFT_ICON, icon, { sdf: true, pixelRatio: 2 });
+	}
+	if (!map.getSource(LEADER_SOURCE))
+		map.addSource(LEADER_SOURCE, { type: 'geojson', data: empty });
+	if (!map.getSource(AIRCRAFT_SOURCE))
+		map.addSource(AIRCRAFT_SOURCE, { type: 'geojson', data: empty });
+	const fadeIn = (to: number): maplibregl.ExpressionSpecification => [
+		'interpolate',
+		['linear'],
+		['zoom'],
+		HEATMAP_UNTIL_ZOOM - 0.5,
+		0,
+		HEATMAP_UNTIL_ZOOM + 0.5,
+		to
+	];
+	if (!map.getLayer(HEATMAP_LAYER)) {
+		map.addLayer({
+			id: HEATMAP_LAYER,
+			type: 'heatmap',
+			source: AIRCRAFT_SOURCE,
+			maxzoom: HEATMAP_UNTIL_ZOOM + 1,
+			paint: {
+				'heatmap-weight': 1,
+				'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 6, 0.7],
+				'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 11],
+				'heatmap-color': [
+					'interpolate',
+					['linear'],
+					['heatmap-density'],
+					0,
+					'rgba(56, 189, 248, 0)',
+					0.15,
+					'rgba(56, 189, 248, 0.35)',
+					0.4,
+					'rgba(96, 165, 250, 0.6)',
+					0.7,
+					'rgba(192, 132, 252, 0.8)',
+					1,
+					'rgba(255, 255, 255, 0.95)'
+				],
+				'heatmap-opacity': [
+					'interpolate',
+					['linear'],
+					['zoom'],
+					HEATMAP_UNTIL_ZOOM - 0.5,
+					0.9,
+					HEATMAP_UNTIL_ZOOM + 0.5,
+					0
+				]
+			}
+		});
+	}
+	if (!map.getLayer(LEADER_LAYER)) {
+		map.addLayer({
+			id: LEADER_LAYER,
+			type: 'line',
+			source: LEADER_SOURCE,
+			minzoom: HEATMAP_UNTIL_ZOOM - 0.5,
+			layout: { 'line-cap': 'round' },
+			paint: {
+				'line-color': ['get', 'color'],
+				'line-width': 1.5,
+				'line-opacity': fadeIn(0.65)
+			}
+		});
+	}
+	if (!map.getLayer(AIRCRAFT_LAYER)) {
+		map.addLayer({
+			id: AIRCRAFT_LAYER,
+			type: 'symbol',
+			source: AIRCRAFT_SOURCE,
+			minzoom: HEATMAP_UNTIL_ZOOM - 0.5,
+			layout: {
+				'icon-image': AIRCRAFT_ICON,
+				'icon-size': ['interpolate', ['linear'], ['zoom'], 4, 0.7, 8, 0.85, 12, 1.1],
+				'icon-rotate': ['get', 'track'],
+				'icon-rotation-alignment': 'map',
+				'icon-allow-overlap': true,
+				'icon-ignore-placement': true
+			},
+			paint: {
+				'icon-color': ['get', 'color'],
+				'icon-opacity': fadeIn(1),
+				'icon-halo-color': ['case', ['get', 'selected'], '#ffffff', 'rgba(0, 0, 0, 0.85)'],
+				'icon-halo-width': ['case', ['get', 'selected'], 2, 1]
+			}
+		});
+	}
+	return true;
+}
+
+function removeLayers(map: maplibregl.Map): void {
+	try {
+		for (const layer of [AIRCRAFT_LAYER, LEADER_LAYER, HEATMAP_LAYER]) {
+			if (map.getLayer(layer)) map.removeLayer(layer);
+		}
+		for (const source of [AIRCRAFT_SOURCE, LEADER_SOURCE]) {
+			if (map.getSource(source)) map.removeSource(source);
+		}
+	} catch {
+		// The map may already be torn down with its style.
+	}
+}
+
+function select(id: string): void {
+	const contact = contacts[id];
+	if (!contact) return;
+	selectedId = id;
+	flightStore.update((store) => ({
+		...store,
+		selectedFlight: contact.flight,
+		observedAt: contact.reportedAt,
+		positionAgeMs: contact.positionAgeMs
+	}));
+}
+
+function attach(map: maplibregl.Map): void {
+	if (attachedMap === map) return;
+	detachHandlers?.();
+	attachedMap = map;
+
+	const onClick = (event: maplibregl.MapLayerMouseEvent) => {
+		const id = event.features?.[0]?.properties?.id;
+		if (typeof id === 'string') select(id);
+	};
+	const onEnter = () => (map.getCanvas().style.cursor = 'pointer');
+	const onLeave = () => (map.getCanvas().style.cursor = '');
+	map.on('click', AIRCRAFT_LAYER, onClick);
+	map.on('mouseenter', AIRCRAFT_LAYER, onEnter);
+	map.on('mouseleave', AIRCRAFT_LAYER, onLeave);
+	detachHandlers = () => {
+		map.off('click', AIRCRAFT_LAYER, onClick);
+		map.off('mouseenter', AIRCRAFT_LAYER, onEnter);
+		map.off('mouseleave', AIRCRAFT_LAYER, onLeave);
+	};
 }
 
 function startAnimation(): void {
 	if (frame !== undefined) return;
+	let last = -Infinity;
 	const tick = (now: number) => {
-		stepAnimation(now);
 		frame = requestAnimationFrame(tick);
+		const map = attachedMap;
+		if (!map) return;
+		if (now - last < animationStepMs(map.getZoom(), Object.keys(contacts).length)) return;
+		last = now;
+		stepAnimation(now);
 	};
 	frame = requestAnimationFrame(tick);
+}
+
+/** The visible area, rounded so tiny pans do not defeat HTTP caching. */
+export function viewportQuery(map: maplibregl.Map): string {
+	const bounds = map.getBounds();
+	const round = (value: number) => value.toFixed(2);
+	return (
+		`adsb/area?west=${round(bounds.getWest())}&south=${round(bounds.getSouth())}` +
+		`&east=${round(bounds.getEast())}&north=${round(bounds.getNorth())}`
+	);
 }
 
 export async function loadFlightData(
 	map: maplibregl.Map,
 	fetchFn: typeof fetch = fetch
 ): Promise<void> {
+	attach(map);
 	try {
-		const centre = map.getCenter();
-		const radius = viewportRadiusNm(map);
-		const response = await fetchFn(
-			buildApiUrl(
-				`adsb?lat=${centre.lat.toFixed(3)}&lon=${centre.lng.toFixed(3)}&radius_nm=${radius}`
-			)
-		);
+		const response = await fetchFn(buildApiUrl(viewportQuery(map)));
 		if (!response.ok) throw new Error(`ADS-B request failed with ${response.status}`);
 		const payload = (await response.json()) as {
 			aircraft?: Flight[];
 			feed_age_seconds?: number;
+			truncated?: boolean;
+			pending?: number;
 		};
+		pending = payload.pending ?? 0;
 		const aircraft = payload.aircraft ?? [];
 		const now = performance.now();
-		// The server serves from cache for as long as we poll, so a response can
-		// describe a sky up to a TTL old before a single aircraft's own report
-		// age is counted. Both have to be reckoned through, or the map draws
-		// every aircraft permanently behind where it is.
+		// A response can describe a sky some seconds old before a single
+		// aircraft's own report age is counted. Both have to be reckoned
+		// through, or every aircraft is drawn permanently behind where it is.
 		const feedAgeMs = (payload.feed_age_seconds ?? 0) * 1000;
 
 		const seen = new Set<string>();
@@ -241,31 +482,22 @@ export async function loadFlightData(
 			if (existing) {
 				// Carry the current on-screen position into the new report as a
 				// correction, so a report that disagrees with the dead-reckoned
-				// track eases into place instead of snapping the marker.
+				// track eases into place instead of snapping.
 				const wasAt = displayedPosition(existing, now);
 				const wasFacing = displayedTrack(existing, now);
+				existing.flight = flight;
 				existing.reported = reported;
 				existing.reportedAt = now;
 				existing.speedKt = speedKt;
 				existing.track = track;
 				existing.positionAgeMs = positionAgeMs;
-				existing.offset = [wasAt[0] - reported[0], wasAt[1] - reported[1]];
+				const nowAt = displayedPosition({ ...existing, offset: [0, 0] }, now);
+				existing.offset = [wasAt[0] - nowAt[0], wasAt[1] - nowAt[1]];
 				existing.trackOffset = shortestTurn(track, wasFacing);
 				existing.offsetAt = now;
-				const svg = glyph(existing.marker.getElement());
-				if (svg) svg.style.color = markerColor(flight);
 			} else {
-				const el = element(flight);
-				const svg = glyph(el);
-				if (svg) {
-					svg.style.color = markerColor(flight);
-					svg.style.transform = `rotate(${track}deg)`;
-				}
-				const marker = new maplibregl.Marker({ element: el })
-					.setLngLat(deadReckon(reported, speedKt, track, positionAgeMs))
-					.addTo(map);
 				contacts[flight.id] = {
-					marker,
+					flight,
 					reported,
 					reportedAt: now,
 					speedKt,
@@ -276,44 +508,67 @@ export async function loadFlightData(
 					offsetAt: now
 				};
 			}
-
-			// Rebound the click handler every report so the detail panel opens
-			// on the current altitude and speed rather than a stale one.
-			const contact = contacts[flight.id];
-			contact.marker.getElement().onclick = () =>
-				flightStore.update((store) => ({
-					...store,
-					selectedFlight: flight,
-					observedAt: contact.reportedAt,
-					positionAgeMs: contact.positionAgeMs
-				}));
 		}
 
 		// Aircraft land, leave the viewport, or go out of receiver range, so
 		// drop what the feed no longer lists.
-		for (const [id, contact] of Object.entries(contacts)) {
-			if (!seen.has(id)) {
-				contact.marker.remove();
-				delete contacts[id];
-			}
+		for (const id of Object.keys(contacts)) {
+			if (!seen.has(id)) delete contacts[id];
 		}
+		// Keep the open detail panel on the newest report.
+		if (selectedId && contacts[selectedId]) select(selectedId);
 
-		if (Object.keys(contacts).length > 0) startAnimation();
+		adsbCoverage.set({ truncated: payload.truncated ?? false, pending, count: seen.size });
+		stepAnimation(now);
+		startAnimation();
 	} catch (error) {
 		console.error('ADS-B fetch error:', error);
 	} finally {
-		timer = setTimeout(() => void loadFlightData(map, fetchFn), REFRESH_MS);
+		cancelScheduled();
+		// A hidden tab has nobody watching: hold the next poll until it is shown.
+		timer = setTimeout(
+			() => {
+				timer = undefined;
+				cancelDeferred = runWhenVisible(() => void loadFlightData(map, fetchFn));
+			},
+			pending > 0 ? PENDING_REFRESH_MS : REFRESH_MS
+		);
 	}
 }
 
-/**
- * Re-query for a moved viewport without tearing the layer down.
- *
- * Clearing the markers here is what made the display flash on every pan: each
- * one was destroyed and rebuilt rather than kept and moved.
- */
+/** Re-query for a moved viewport, keeping the aircraft already drawn. */
 export function refreshForViewport(map: maplibregl.Map, fetchFn: typeof fetch = fetch): void {
-	if (timer !== undefined) clearTimeout(timer);
-	timer = undefined;
+	cancelScheduled();
 	void loadFlightData(map, fetchFn);
+}
+
+/** Forget the selection, e.g. when the detail panel is closed. */
+export function clearSelection(): void {
+	selectedId = null;
+}
+
+/**
+ * Aircraft currently drawn within `nm` nautical miles of a point, airborne
+ * and on the ground. Used by the airport panel for nearby traffic.
+ */
+export function aircraftWithin(
+	lon: number,
+	lat: number,
+	nm: number,
+	now: number = performance.now()
+): { airborne: number; ground: number } {
+	let airborne = 0;
+	let ground = 0;
+	const shrink = Math.cos((lat * Math.PI) / 180);
+	for (const contact of Object.values(contacts)) {
+		const [x, y] = displayedPosition(contact, now);
+		const distance = Math.hypot(
+			(y - lat) * MINUTES_PER_DEGREE,
+			(x - lon) * MINUTES_PER_DEGREE * shrink
+		);
+		if (distance > nm) continue;
+		if (contact.flight.on_ground) ground += 1;
+		else airborne += 1;
+	}
+	return { airborne, ground };
 }
