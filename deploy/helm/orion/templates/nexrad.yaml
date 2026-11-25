@@ -41,10 +41,23 @@ spec:
         - name: nexrad
           image: {{ include "orion.image" (dict "root" . "name" "nexrad") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.nexrad.demand.enabled }}
+          ports:
+            - name: demand
+              containerPort: {{ .Values.nexrad.demand.port }}
+          {{- end }}
           env:
             {{- range $key, $value := .Values.nexrad.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- if .Values.nexrad.demand.enabled }}
+            - name: ORION_NEXRAD_DEMAND_PORT
+              value: {{ .Values.nexrad.demand.port | quote }}
+            - name: ORION_NEXRAD_IDLE_AFTER_SECONDS
+              value: {{ .Values.nexrad.demand.idleAfterSeconds | quote }}
+            - name: ORION_NEXRAD_IDLE_INTERVAL_SECONDS
+              value: {{ .Values.nexrad.demand.idleIntervalSeconds | quote }}
             {{- end }}
             {{- include "orion.cpuEnv" (dict "name" "nexrad" "resources" .Values.nexrad.resources) | nindent 12 }}
           volumeMounts:

@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.nexrad.env.SCAN_DIR | quote }}
             - name: WEB_CONCURRENCY
               value: {{ .Values.api.webConcurrency | quote }}
+            {{- if .Values.nexrad.demand.enabled }}
+            - name: ORION_NEXRAD_DEMAND_URL
+              value: "http://{{ include "orion.fullname" . }}-nexrad:{{ .Values.nexrad.demand.port }}/demand"
+            {{- end }}
             {{- with .Values.api.corsOrigins }}
             - name: ORION_CORS_ORIGINS
               value: {{ join "," . | quote }}

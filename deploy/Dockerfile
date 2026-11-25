@@ -15,7 +15,7 @@ RUN groupadd --gid 65532 nonroot \
 
 RUN mkdir -p /app/scans && chown 65532:65532 /app/scans
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 
 
 FROM base AS api
@@ -23,12 +23,12 @@ FROM base AS api
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-default-groups --group api
 
-COPY data/nexrad_stations.csv data/nexrad_stations.csv
+COPY data/nexrad_stations.csv data/airports.csv data/
 COPY src/services/ src/services/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-default-groups --group api
 
-ENV WEB_CONCURRENCY=2
+ENV WEB_CONCURRENCY=1
 
 USER nonroot
 EXPOSE 5171
@@ -50,6 +50,9 @@ COPY data/nexrad_stations.csv data/nexrad_stations.csv
 COPY src/services/ src/services/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-default-groups --group nexrad
+
+# Bounds glibc's per-thread malloc arenas; see the chart's nexrad values.
+ENV MALLOC_ARENA_MAX=2
 
 USER nonroot
 

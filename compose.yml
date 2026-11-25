@@ -23,6 +23,8 @@ services:
       # The GUI is a separate origin locally; in production the ingress
       # terminates the browser's origin and sets its own CORS, so this is empty.
       ORION_CORS_ORIGINS: ${ORION_CORS_ORIGINS:-http://localhost:5173}
+      # Requests to the API keep the producer at its full cadence.
+      ORION_NEXRAD_DEMAND_URL: http://nexrad:8090/demand
     ports:
       - "5171:5171"
     volumes:
@@ -45,13 +47,16 @@ services:
       ORION_NEXRAD_STATIONS: ${ORION_NEXRAD_STATIONS:-ALL}
       ORION_NEXRAD_BOUNDS: ${ORION_NEXRAD_BOUNDS:--91.5,33.0,-81.0,39.0}
       ORION_NEXRAD_HISTORY_HOURS: ${ORION_NEXRAD_HISTORY_HOURS:-6}
+      # Full cadence only while the API has had traffic in the last 15 min;
+      # otherwise one frame every 15 min. Set the port to 0 to always run.
+      ORION_NEXRAD_DEMAND_PORT: ${ORION_NEXRAD_DEMAND_PORT:-8090}
     volumes:
       - radar-data:/app/scans
     deploy:
       resources:
         limits:
-          cpus: "4"
-          memory: 6g
+          cpus: "2"
+          memory: 3g
 
 volumes:
   radar-data:

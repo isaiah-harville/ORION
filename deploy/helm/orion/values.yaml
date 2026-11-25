@@ -29,11 +29,19 @@ securityContext:
 
 # Stateless readers: every pod serves finished tiles off the shared volume, so
 # this scales horizontally with traffic.
+#
+# Sized from load tests (ApacheBench, 32 concurrent, one uvicorn worker):
+# 15k req/s health, 4k req/s tiles, 2k req/s manifests, 8k req/s airports and
+# ~280 req/s for a merged regional flight view, at ~130 MB idle and ~150 MB
+# under load (plus up to ~60 MB of cached flight circles for a continental
+# view). Production traffic is orders of magnitude below that.
 api:
   replicaCount: 2
-  # uvicorn workers per pod. The API is I/O bound, so a couple saturate the CPU
-  # limit below and replicaCount is what actually adds capacity.
-  webConcurrency: 2
+  # uvicorn workers per pod. One is plenty for the traffic above, and each
+  # extra worker keeps its own flight cache and background filler -- doubling
+  # memory and the requests made to the upstream flight feed for no gain.
+  # Add replicas, not workers, for capacity.
+  webConcurrency: 1
   # Empty in production: the ingress terminates the browser's origin and sets
   # its own CORS. Only needed when the GUI is served from another origin.
   corsOrigins: []
@@ -41,12 +49,14 @@ api:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # No CPU limit: the API idles near zero (p99 0.02 cores in production) and
+  # only bursts while serving, where throttling would just add latency.
   resources:
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 50m
+      memory: 192Mi
     limits:
-      memory: 1Gi
+      memory: 512Mi
 
 # The single writer. Its replica count is fixed at 1 by the template; scale it
 # by raising the CPU limit -- the ingest and compositing pools size themselves
@@ -59,13 +69,33 @@ nexrad:
   # nexrad keeps a CPU limit: it is a periodic batch job, so throttling only
   # makes a cycle slower -- and the cycle timing log says when that starts to
   # matter. The worker pools size themselves from this via the Downward API.
+  #
+  # Sized from full-CONUS benchmarks (127 stations, first-sweep downloads):
+  # ~29 CPU-seconds per frame on a fast desktop core, ~80 on the cluster's
+  # nodes -- about 0.27 cores averaged over the 5-minute active cadence and
+  # 0.09 at the 15-minute idle one. Two CPUs finish a cycle well inside the
+  # interval; past 8 ingest workers (the 2-CPU default) wall time stopped
+  # improving while memory kept climbing. Peak memory measured in a Linux
+  # container under these limits was ~1.3 GB with MALLOC_ARENA_MAX=2 and was
+  # OOM-killed at 1.2 GB, so the request sits just above the working peak and
+  # the limit leaves 2x headroom. (The previous full-volume pipeline needed
+  # ~4.2 GB on average and hit a 6 GiB limit.)
   resources:
     requests:
+      cpu: 500m
+      memory: 1536Mi
+    limits:
       cpu: "2"
       memory: 3Gi
-    limits:
-      cpu: "4"
-      memory: 6Gi
+  # Produce at the normal cadence only while the app has traffic. The API pings
+  # the producer on requests (throttled); with no traffic for idleAfterSeconds
+  # the producer slows to one frame per idleIntervalSeconds, and the next ping
+  # wakes it immediately. Disable to always run at the normal cadence.
+  demand:
+    enabled: true
+    port: 8090
+    idleAfterSeconds: 900
+    idleIntervalSeconds: 900
   # Only settings that differ from the code defaults, or that an operator
   # actually tunes. ORION_MOSAIC_DIR is derived from SCAN_DIR and is not set.
   env:
@@ -73,6 +103,9 @@ nexrad:
     ORION_NEXRAD_STATIONS: ALL
     ORION_NEXRAD_BOUNDS: "-125.0,24.0,-66.5,49.5"
     ORION_NEXRAD_HISTORY_HOURS: "6"
+    # glibc gives each busy thread its own malloc arena; with a dozen decode
+    # threads the freed-but-unreturned memory adds ~200 MB to the peak.
+    MALLOC_ARENA_MAX: "2"
 
 gui:
   replicaCount: 1
@@ -80,13 +113,16 @@ gui:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The Node server only serves the built app: ~60 MB idle and ~190 MB after
+  # 6,000 requests at 17k req/s (V8 grows its heap before collecting);
+  # production has run at 85-120 MB and under 0.01 cores.
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 25m
+      memory: 96Mi
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 384Mi
   # Empty is correct for the documented topology: one ingress serving the GUI
   # at / and the API at /api, so the GUI's same-origin default just works. Set
   # PUBLIC_ORION_API_URL only when the API lives on another origin.

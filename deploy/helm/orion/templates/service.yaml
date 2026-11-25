@@ -33,3 +33,24 @@ spec:
     - name: gui
       port: {{ .Values.service.guiPort }}
       targetPort: gui
+{{- if .Values.nexrad.demand.enabled }}
+---
+# Cluster-internal only: the API tells the producer the app is in use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "orion.fullname" . }}-nexrad
+  labels:
+    {{- include "orion.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nexrad
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "orion.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: nexrad
+  ports:
+    - name: demand
+      port: {{ .Values.nexrad.demand.port }}
+      targetPort: demand
+{{- end }}
