@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { quakeStore, type Quake } from '#lib/stores/quake-store.js';
+	import { Alert, Button, Card } from '@sivir-ui/svelte';
 	import { markerColor } from '#lib/quake-updater.js';
-	import { flyAndScale } from '#lib/utils.js';
 	import X from '@lucide/svelte/icons/x';
 
 	let selectedQuake: Quake | null = $state(null);
@@ -23,61 +23,63 @@
 </script>
 
 {#if selectedQuake}
-	<div
-		transition:flyAndScale
-		class="bg-background relative mt-16 w-full rounded-lg border p-4 text-white shadow-lg lg:w-[27.5rem]"
+	<Card.Root
+		variant="panel"
+		class="mt-16 w-full lg:w-[27.5rem] [&_[data-ui=card-surface]]:gap-3.5 [&_[data-ui=card-surface]]:p-4"
 	>
-		<button class="absolute top-4 right-4" onclick={closePanel} aria-label="Close">
-			<X class="text-white/70 duration-200 hover:text-white/40" size={18} />
-		</button>
-
-		<div class="flex items-center gap-3">
-			<span
-				class="flex size-11 shrink-0 items-center justify-center rounded-full font-mono text-sm font-bold text-black"
-				style="background-color: {markerColor(selectedQuake.magnitude)}"
-			>
-				{selectedQuake.magnitude.toFixed(1)}
-			</span>
-			<div class="min-w-0">
-				<h2 class="truncate text-lg font-bold">
-					{selectedQuake.place ?? 'Unknown location'}
-				</h2>
-				<div class="text-foreground-muted font-mono text-xs">
-					{formatTime(selectedQuake.time)}
+		<div class="flex items-start justify-between gap-3">
+			<div class="flex min-w-0 items-center gap-3">
+				<span
+					class="flex size-11 shrink-0 items-center justify-center rounded-full font-mono text-sm font-bold text-black"
+					style="background-color: {markerColor(selectedQuake.magnitude)}"
+				>
+					{selectedQuake.magnitude.toFixed(1)}
+				</span>
+				<div class="min-w-0">
+					<h2 class="truncate text-base font-semibold">
+						{selectedQuake.place ?? 'Unknown location'}
+					</h2>
+					<div class="text-foreground-muted font-mono text-xs">
+						{formatTime(selectedQuake.time)}
+					</div>
 				</div>
 			</div>
+			<Button
+				variant="ghost"
+				size="icon"
+				class="-mt-2 -mr-2 size-9"
+				onclick={closePanel}
+				aria-label="Close earthquake details"
+			>
+				<X size={16} />
+			</Button>
 		</div>
 
-		<div class="my-3 grid grid-cols-2 gap-2 text-sm">
-			<div><strong>Latitude:</strong> {selectedQuake.latitude.toFixed(4)}</div>
-			<div><strong>Longitude:</strong> {selectedQuake.longitude.toFixed(4)}</div>
-			<div>
-				<strong>Depth:</strong>
-				{selectedQuake.depth_km !== null
-					? `${selectedQuake.depth_km.toFixed(1)} km`
-					: 'N/A'}
-			</div>
-			<div><strong>Felt reports:</strong> {selectedQuake.felt ?? '0'}</div>
-		</div>
+		<dl class="grid grid-cols-2 gap-x-3.5 gap-y-2.5 text-[13px]">
+			{#each [['Latitude', selectedQuake.latitude.toFixed(4)], ['Longitude', selectedQuake.longitude.toFixed(4)], ['Depth', selectedQuake.depth_km !== null ? `${selectedQuake.depth_km.toFixed(1)} km` : 'N/A'], ['Felt reports', String(selectedQuake.felt ?? 0)]] as [term, value] (term)}
+				<div class="flex flex-col gap-0.5">
+					<dt class="text-foreground-muted">{term}</dt>
+					<dd class="font-mono tabular-nums">{value}</dd>
+				</div>
+			{/each}
+		</dl>
 
 		{#if selectedQuake.tsunami}
-			<div class="mb-2 rounded bg-red-900/40 px-2 py-1 text-sm text-red-200">
-				Tsunami evaluation issued for this event
-			</div>
+			<Alert.Root variant="warning">
+				<Alert.Description>Tsunami evaluation issued for this event</Alert.Description>
+			</Alert.Root>
 		{/if}
 
 		{#if selectedQuake.url}
 			<!-- An absolute USGS event URL, not an app route, so resolve() does not apply. -->
-			<!-- eslint-disable svelte/no-navigation-without-resolve -->
-			<a
+			<Button
+				variant="outline"
 				href={selectedQuake.url}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="text-sm underline decoration-white/40 hover:decoration-white"
 			>
 				View on USGS
-			</a>
-			<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			</Button>
 		{/if}
-	</div>
+	</Card.Root>
 {/if}

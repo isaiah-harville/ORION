@@ -171,7 +171,7 @@
 
 	<div class="text-foreground-muted min-w-0 font-mono text-[10px] leading-none tabular-nums">
 		<div class="flex items-center whitespace-nowrap lg:hidden">
-			<span class={dataIsStale ? 'text-destructive' : frameCount > 0 ? 'text-success' : ''}>
+			<span class={dataIsStale ? 'text-error' : frameCount > 0 ? 'text-success' : ''}>
 				{compactFreshnessLabel}
 			</span>
 			<span class="border-border ml-2 border-l pl-2">
@@ -189,7 +189,7 @@
 			</span>
 		</div>
 		<div class="hidden items-center whitespace-nowrap lg:flex">
-			<span class={dataIsStale ? 'text-destructive' : frameCount > 0 ? 'text-success' : ''}>
+			<span class={dataIsStale ? 'text-error' : frameCount > 0 ? 'text-success' : ''}>
 				{freshnessLabel}
 			</span>
 			<span class="border-border ml-2 border-l pl-2">

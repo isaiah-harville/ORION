@@ -25,7 +25,7 @@ def fake_ingest(root: Path, monkeypatch, *, decode_fails: bool = False):
     """Stand in for the S3 download and pyart decode around the delete."""
     downloaded = root / "KOHX" / "20260830" / "KOHX20260830_000000_V06"
 
-    def download(_client, _bucket, _scan, _cache):
+    def download(_client, _bucket, _scan, _cache, first_sweep_only=False):
         downloaded.parent.mkdir(parents=True, exist_ok=True)
         downloaded.write_bytes(b"volume")
         return downloaded
@@ -108,3 +108,37 @@ def test_superseded_frames_are_removed_once_aged(tmp_path: Path) -> None:
     assert not old.exists()
     # A concurrent producer's fresh output is left alone by the age guard.
     assert recent_other.is_dir()
+
+
+def test_manifest_keeps_frames_by_age_not_count(make_settings) -> None:
+    import json
+    from datetime import timedelta
+
+    from services.nexrad.manifest import publish_manifest
+    from services.nexrad.settings import configuration_hash
+
+    settings = make_settings(history=timedelta(hours=1), retained_frames=100)
+    frames = settings.mosaic_directory / "frames"
+    suffix = configuration_hash(settings)
+    # An idle stretch: 15-minute frames, then the five-minute cadence resumes.
+    times = [0, 900, 1800, 2700, 3600, 3900, 4200]
+    for t in times:
+        directory = frames / f"{1_800_000_000 + t}-{suffix}"
+        directory.mkdir(parents=True)
+        (directory / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "id": directory.name,
+                    "time": 1_800_000_000 + t,
+                    "stations": [],
+                    "max_skew_seconds": 0,
+                }
+            )
+        )
+
+    publish_manifest(settings)
+
+    manifest = json.loads((settings.mosaic_directory / "manifest.json").read_text())
+    kept = [frame["time"] - 1_800_000_000 for frame in manifest["frames"]]
+    assert kept == [900, 1800, 2700, 3600, 3900, 4200]
+    assert not (frames / f"{1_800_000_000}-{suffix}").exists()

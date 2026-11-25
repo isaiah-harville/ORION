@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { afterNavigate, goto } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { current_lat_long } from '#lib/stores/current-location.js';
@@ -26,7 +26,6 @@
 	let viewsOpen = $state(false);
 	let selectedStyle = $state(map_style_state.data === 'neon' ? 'neon' : 'dark');
 	let currentView: View = $derived(viewFromPath(page.url.pathname));
-	let selectedView = $state<View>(viewFromPath(page.url.pathname));
 	let currentViewLabel = $derived(
 		views.find((view) => view.value === currentView)?.label ?? 'Radar'
 	);
@@ -35,22 +34,20 @@
 		return pathname === '/adsb' ? 'adsb' : pathname === '/quakes' ? 'quakes' : 'radar';
 	}
 
-	afterNavigate(() => {
-		selectedView = viewFromPath(page.url.pathname);
-	});
-
 	$effect(() => {
 		if (selectedStyle !== map_style_state.data) {
 			map_style_state.data = selectedStyle;
 		}
 	});
 
-	$effect(() => {
-		if (selectedView !== currentView) {
-			const target = views.find((view) => view.value === selectedView);
-			if (target) navigate(target.href);
-		}
-	});
+	// The URL is the only record of the current view. A separate selected-view
+	// state, kept in step with the route by effects, could fall out of step
+	// with it and chase it back and forth -- an endless navigation loop that
+	// remounted every map layer.
+	function selectView(value: string) {
+		const target = views.find((view) => view.value === value);
+		if (target) navigate(target.href);
+	}
 
 	function navigate(href: '/' | '/adsb' | '/quakes') {
 		viewsOpen = false;
@@ -88,7 +85,7 @@
 	aria-label="Map commands"
 	class="orion-surface absolute top-[18px] left-5 z-40 hidden flex-nowrap gap-2.5 rounded-[var(--radius-xl)] lg:flex"
 >
-	<Tabs.Root bind:value={selectedView} variant="segmented">
+	<Tabs.Root bind:value={() => currentView, selectView} variant="segmented">
 		<Tabs.List>
 			{#each views as view (view.value)}
 				<Tabs.Trigger value={view.value}>{view.label}</Tabs.Trigger>
@@ -109,20 +106,38 @@
 		></span>
 		Radar
 	</Button>
-	<Button
-		variant={layers_state.data.radar_stations_layer ? 'secondary' : 'ghost'}
-		class={layers_state.data.radar_stations_layer ? '' : 'text-foreground-muted'}
-		onclick={() =>
-			(layers_state.data.radar_stations_layer = !layers_state.data.radar_stations_layer)}
-		aria-pressed={layers_state.data.radar_stations_layer}
-	>
-		<span
-			class="size-1.5 rounded-full {layers_state.data.radar_stations_layer
-				? 'bg-primary'
-				: 'bg-border-strong'}"
-		></span>
-		Stations
-	</Button>
+	<!-- Each view gets the overlay that belongs to it; both together no longer
+	     fit beside the status cluster at the narrowest desktop width. -->
+	{#if currentView === 'adsb'}
+		<Button
+			variant={layers_state.data.airports_layer ? 'secondary' : 'ghost'}
+			class={layers_state.data.airports_layer ? '' : 'text-foreground-muted'}
+			onclick={() => (layers_state.data.airports_layer = !layers_state.data.airports_layer)}
+			aria-pressed={layers_state.data.airports_layer}
+		>
+			<span
+				class="size-1.5 rounded-full {layers_state.data.airports_layer
+					? 'bg-primary'
+					: 'bg-border-strong'}"
+			></span>
+			Airports
+		</Button>
+	{:else}
+		<Button
+			variant={layers_state.data.radar_stations_layer ? 'secondary' : 'ghost'}
+			class={layers_state.data.radar_stations_layer ? '' : 'text-foreground-muted'}
+			onclick={() =>
+				(layers_state.data.radar_stations_layer = !layers_state.data.radar_stations_layer)}
+			aria-pressed={layers_state.data.radar_stations_layer}
+		>
+			<span
+				class="size-1.5 rounded-full {layers_state.data.radar_stations_layer
+					? 'bg-primary'
+					: 'bg-border-strong'}"
+			></span>
+			Stations
+		</Button>
+	{/if}
 	<span class="bg-border h-[22px] w-px" aria-hidden="true"></span>
 	<Input
 		aria-label="Coordinates"
@@ -212,6 +227,13 @@
 				label="Radar stations"
 				description="Show selectable radar station markers."
 			/>
+			{#if currentView === 'adsb'}
+				<Switch
+					bind:switched={layers_state.data.airports_layer}
+					label="Airports"
+					description="Show major airports with nearby traffic."
+				/>
+			{/if}
 
 			<Input
 				label="Coordinates"

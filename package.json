@@ -1,6 +1,7 @@
 {
 	"name": "orion",
 	"private": true,
+	"license": "MIT",
 	"packageManager": "pnpm@11.20.0",
 	"engines": {
 		"node": ">=24.0.0"

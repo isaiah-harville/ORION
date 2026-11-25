@@ -13,6 +13,10 @@ export default defineConfig({
 			preprocess: vitePreprocess()
 		})
 	],
+	// MapLibre's worker is an ES module that imports a shared chunk.
+	worker: {
+		format: 'es'
+	},
 	optimizeDeps: {
 		exclude: ['maplibre-gl']
 	},

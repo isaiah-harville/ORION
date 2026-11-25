@@ -10,6 +10,7 @@ from services.adsb.feed import (
     cache_key,
     cache_ttl_seconds,
     fetch_aircraft,
+    fetch_area,
 )
 
 router = APIRouter(prefix="/adsb", tags=["adsb"])
@@ -37,6 +38,28 @@ def aircraft(
 
     # Let the browser reuse the response for as long as the server would have
     # served the same cached copy anyway.
+    return JSONResponse(
+        payload,
+        headers={"Cache-Control": f"public, max-age={int(cache_ttl_seconds())}"},
+    )
+
+
+@router.get("/area")
+def aircraft_in_area(
+    west: float = Query(..., ge=-540, le=540),
+    south: float = Query(..., ge=-90, le=90),
+    east: float = Query(..., ge=-540, le=540),
+    north: float = Query(..., ge=-90, le=90),
+) -> JSONResponse:
+    """Aircraft over a whole viewport, not just a circle around its centre."""
+    if south >= north or west >= east:
+        raise HTTPException(status_code=422, detail="Empty bounding box")
+    try:
+        payload = fetch_area(west, south, east, north)
+    except FeedError as error:
+        raise HTTPException(
+            status_code=503, detail="Flight feed is unavailable"
+        ) from error
     return JSONResponse(
         payload,
         headers={"Cache-Control": f"public, max-age={int(cache_ttl_seconds())}"},

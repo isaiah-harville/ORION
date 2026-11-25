@@ -57,10 +57,15 @@ class ProducerSettings:
     minimum_stations: int
     maximum_range_km: float
     interval_seconds: int
+    idle_interval_seconds: int
+    idle_after_seconds: int
+    demand_port: int
+    history: timedelta
     retained_frames: int
     ingest_workers: int
     compute_workers: int
     keep_raw_scans: bool
+    first_sweep_only: bool
     raw_retention: timedelta
     raw_directory: Path
     mosaic_directory: Path
@@ -121,6 +126,18 @@ class ProducerSettings:
             minimum_stations=int(os.environ.get("ORION_NEXRAD_MIN_STATIONS", "2")),
             maximum_range_km=float(os.environ.get("ORION_NEXRAD_RANGE_KM", "230")),
             interval_seconds=interval_seconds,
+            # With a demand port set, the producer runs at interval_seconds only
+            # while the app has had traffic in the last idle_after_seconds, and
+            # otherwise every idle_interval_seconds to keep a coarse history.
+            # Port 0 disables this and always runs at the active cadence.
+            idle_interval_seconds=int(
+                os.environ.get("ORION_NEXRAD_IDLE_INTERVAL_SECONDS", "900")
+            ),
+            idle_after_seconds=int(
+                os.environ.get("ORION_NEXRAD_IDLE_AFTER_SECONDS", "900")
+            ),
+            demand_port=int(os.environ.get("ORION_NEXRAD_DEMAND_PORT", "0")),
+            history=timedelta(hours=history_hours),
             retained_frames=retained_frames,
             ingest_workers=int(
                 os.environ.get(
@@ -135,6 +152,13 @@ class ProducerSettings:
             # several gigabytes of cache.
             keep_raw_scans=os.environ.get("ORION_NEXRAD_KEEP_RAW", "").strip().lower()
             in {"1", "true", "yes"},
+            # The mosaic reads only the lowest sweep, which sits at the front of
+            # each volume, so fetching just that prefix cuts download volume by
+            # roughly four fifths. Set to false to fetch whole volumes.
+            first_sweep_only=os.environ.get("ORION_NEXRAD_FIRST_SWEEP_ONLY", "true")
+            .strip()
+            .lower()
+            not in {"0", "false", "no"},
             # Backstop for volumes left behind by a failed decode, and the real
             # bound when raw scans are being kept.
             raw_retention=timedelta(

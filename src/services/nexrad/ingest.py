@@ -47,7 +47,13 @@ def list_station_scans(
 def download_and_extract(
     client: Any, settings: ProducerSettings, scan: ScanObject
 ) -> GateScan:
-    path = download_scan(client, settings.bucket, scan, settings.raw_directory)
+    path = download_scan(
+        client,
+        settings.bucket,
+        scan,
+        settings.raw_directory,
+        first_sweep_only=settings.first_sweep_only,
+    )
     try:
         return extract_lowest_reflectivity(
             path, scan.station, settings.maximum_range_km

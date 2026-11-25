@@ -8,6 +8,12 @@
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
 	import 'maplibre-gl/dist/maplibre-gl.css';
+	// maplibre 6 builds its worker URL at runtime, which the bundler cannot see,
+	// so the worker is never emitted and no tiles render. Have Vite bundle it, with
+	// the shared chunk it imports, and hand MapLibre the emitted URL instead.
+	import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+
+	maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 	import { current_lat_long } from '#lib/stores/current-location.js';
 	import {
@@ -31,18 +37,23 @@
 	import DarkStyle from '#lib/styles/dark.json';
 
 	import { map_style_state } from '#lib/runes/map-style.svelte.js';
+	import { pollWhileVisible } from '#lib/visibility.js';
 	import RadarLayer, { type RadarStation } from './RadarLayer.svelte';
+	import AirportsLayer, { type Airport } from './AirportsLayer.svelte';
+	import AirportInspector from './AirportInspector.svelte';
 
 	let map: maplibregl.Map | undefined = $state<maplibregl.Map | undefined>();
 	let mapElement: HTMLElement;
 	let initialView = { lat: 39.8283, long: -98.5795 };
 	let apiOnline = $state(false);
 	let selectedStation = $state<RadarStation | null>(null);
+	let selectedAirport = $state<Airport | null>(null);
 	let mapCenter = $state({ lat: initialView.lat, lng: initialView.long });
 	let radarFailureNotified = false;
 	let apiFailureNotified = false;
 	let apiFailureCount = 0;
 	let isRadarView = $derived(page.url.pathname === '/');
+	let isFlightView = $derived(page.url.pathname === '/adsb');
 
 	/** Wall-clock milliseconds spent crossfading from one frame to the next. */
 	const FRAME_DURATION_MS = 2_000;
@@ -99,6 +110,14 @@
 				apiFailureNotified = true;
 			}
 		}
+	}
+
+	function centerSelectedAirport() {
+		if (!map || !selectedAirport) return;
+		map.flyTo({
+			center: [selectedAirport.longitude, selectedAirport.latitude],
+			zoom: Math.max(map.getZoom(), 9)
+		});
 	}
 
 	function centerSelectedStation() {
@@ -172,7 +191,17 @@
 			}
 		});
 
-		nextMap.on('click', () => (selectedStation = null));
+		nextMap.on('click', (event) => {
+			selectedStation = null;
+			// The airport layer's own click handler sets the selection; only a
+			// click on empty map clears it.
+			if (
+				!nextMap.getLayer('airports-dot') ||
+				!nextMap.queryRenderedFeatures(event.point, { layers: ['airports-dot'] }).length
+			) {
+				selectedAirport = null;
+			}
+		});
 		nextMap.on('move', () => {
 			const center = nextMap.getCenter();
 			mapCenter = { lat: center.lat, lng: center.lng };
@@ -193,21 +222,27 @@
 
 		initializeMap();
 		void checkApiReachability();
-		const apiReachabilityInterval = window.setInterval(checkApiReachability, 5_000);
-		const radarRefreshInterval = window.setInterval(() => {
+		// Thirty seconds is plenty for an online badge, and a hidden tab skips
+		// these entirely; both catch up the moment it is shown again.
+		const stopApiPolling = pollWhileVisible(checkApiReachability, 30_000);
+		const stopRadarPolling = pollWhileVisible(() => {
 			if (map && layers_state.data.radar_layer) {
 				void updateRadar(map, radar_state.radar_state.timestamp, true);
 			}
 		}, 60_000);
 
 		const dismissOnEscape = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') selectedStation = null;
+			if (event.key === 'Escape') {
+				selectedStation = null;
+				selectedAirport = null;
+			}
 		};
 		window.addEventListener('keydown', dismissOnEscape);
 
 		// Advance playback on the display's own cadence so each step is a
 		// fractional crossfade rather than a jump between frames.
 		let previousTick: number | undefined;
+		let drawnPosition: number | undefined;
 		const tick = (now: number) => {
 			animationHandle = requestAnimationFrame(tick);
 			const elapsed = previousTick === undefined ? 0 : now - previousTick;
@@ -229,13 +264,16 @@
 				const time = state.valid_timestamps[index]?.time;
 				if (time !== state.timestamp) state.timestamp = time;
 			}
+			// Paused playback leaves the position alone; skip re-applying it.
+			if (state.position === drawnPosition) return;
+			drawnPosition = state.position;
 			setRadarFramePosition(map, state.position);
 		};
 		animationHandle = requestAnimationFrame(tick);
 
 		return () => {
-			window.clearInterval(radarRefreshInterval);
-			window.clearInterval(apiReachabilityInterval);
+			stopRadarPolling();
+			stopApiPolling();
 			window.removeEventListener('keydown', dismissOnEscape);
 			if (animationHandle !== undefined) cancelAnimationFrame(animationHandle);
 		};
@@ -268,6 +306,7 @@
 		prevRadarLayer = layers_state.data.radar_layer;
 
 		if (!layers_state.data.radar_stations_layer) selectedStation = null;
+		if (!layers_state.data.airports_layer || !isFlightView) selectedAirport = null;
 	});
 
 	onDestroy(() => {
@@ -289,8 +328,8 @@
 
 		<div
 			class="absolute top-[76px] z-40 hidden flex-col gap-2 lg:flex"
-			class:right-5={!selectedStation}
-			class:right-[336px]={selectedStation !== null}
+			class:right-5={!selectedStation && !selectedAirport}
+			class:right-[336px]={selectedStation !== null || selectedAirport !== null}
 		>
 			<Button
 				variant="outline"
@@ -330,6 +369,16 @@
 
 		{#if layers_state.data?.adsb_layer}
 			<ADSBLayer {map} />
+		{/if}
+		{#if isFlightView && layers_state.data.airports_layer}
+			<AirportsLayer {map} onselect={(airport) => (selectedAirport = airport)} />
+		{/if}
+		{#if selectedAirport}
+			<AirportInspector
+				airport={selectedAirport}
+				onclose={() => (selectedAirport = null)}
+				oncenter={centerSelectedAirport}
+			/>
 		{/if}
 		{#if layers_state.data?.quake_layer}
 			<QuakeLayer {map} />

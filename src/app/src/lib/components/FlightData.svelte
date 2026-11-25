@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy } from 'svelte';
+	import { Alert, Button, Card } from '@sivir-ui/svelte';
 	import { flightStore, type Flight } from '#lib/stores/flight-store.js';
-	import { markerColor, label } from '#lib/adsb-updater.js';
-	import { flyAndScale } from '#lib/utils.js';
+	import { clearSelection, markerColor, label } from '#lib/adsb-updater.js';
 	import X from '@lucide/svelte/icons/x';
 
 	let selectedFlight: Flight | null = $state(null);
@@ -18,9 +18,11 @@
 		positionAgeMs = store.positionAgeMs;
 	});
 
-	onMount(() => {
-		const handle = setInterval(() => (clock = performance.now()), 1_000);
+	// Only tick while a flight is actually on screen.
+	$effect(() => {
+		if (!selectedFlight) return;
 		clock = performance.now();
+		const handle = setInterval(() => (clock = performance.now()), 1_000);
 		return () => clearInterval(handle);
 	});
 
@@ -32,6 +34,7 @@
 	);
 
 	function closePanel() {
+		clearSelection();
 		flightStore.update((d) => ({ ...d, selectedFlight: null }));
 	}
 
@@ -51,58 +54,61 @@
 </script>
 
 {#if selectedFlight}
-	<div
-		transition:flyAndScale
-		class="bg-background relative mt-16 w-full rounded-lg border p-4 text-white shadow-lg lg:w-[27.5rem]"
+	<Card.Root
+		variant="panel"
+		class="mt-16 w-full lg:w-[27.5rem] [&_[data-ui=card-surface]]:gap-3.5 [&_[data-ui=card-surface]]:p-4"
 	>
-		<button class="absolute top-4 right-4" onclick={closePanel} aria-label="Close">
-			<X class="text-white/70 duration-200 hover:text-white/40" size={18} />
-		</button>
-
-		<div class="flex items-center gap-3">
-			<span
-				class="size-3 shrink-0 rounded-full"
-				style="background-color: {markerColor(selectedFlight)}"
-			></span>
-			<div class="min-w-0">
-				<h2 class="truncate font-mono text-lg font-bold">{label(selectedFlight)}</h2>
-				<div class="text-foreground-muted text-xs">
-					{selectedFlight.aircraft_type ?? 'Unknown type'}
-					{#if selectedFlight.registration}
-						· {selectedFlight.registration}
-					{/if}
+		<div class="flex items-start justify-between gap-3">
+			<div class="flex min-w-0 items-center gap-3">
+				<span
+					class="size-3 shrink-0 rounded-full"
+					style="background-color: {markerColor(selectedFlight)}"
+				></span>
+				<div class="min-w-0">
+					<h2 class="truncate font-mono text-base font-semibold">
+						{label(selectedFlight)}
+					</h2>
+					<div class="text-foreground-muted text-xs">
+						{selectedFlight.aircraft_type ?? 'Unknown type'}
+						{#if selectedFlight.registration}
+							· {selectedFlight.registration}
+						{/if}
+					</div>
 				</div>
 			</div>
+			<Button
+				variant="ghost"
+				size="icon"
+				class="-mt-2 -mr-2 size-9"
+				onclick={closePanel}
+				aria-label="Close flight details"
+			>
+				<X size={16} />
+			</Button>
 		</div>
 
-		<div class="my-3 grid grid-cols-2 gap-2 text-sm">
-			<div><strong>Altitude:</strong> {altitude(selectedFlight)}</div>
-			<div>
-				<strong>Ground speed:</strong>
-				{selectedFlight.ground_speed_kt !== null
-					? `${Math.round(selectedFlight.ground_speed_kt)} kt`
-					: 'N/A'}
+		<dl class="grid grid-cols-2 gap-x-3.5 gap-y-2.5 text-[13px]">
+			{#each [['Altitude', altitude(selectedFlight)], ['Ground speed', selectedFlight.ground_speed_kt !== null ? `${Math.round(selectedFlight.ground_speed_kt)} kt` : 'N/A'], ['Track', selectedFlight.track_deg !== null ? `${Math.round(selectedFlight.track_deg)}°` : 'N/A'], ['Squawk', selectedFlight.squawk ?? 'N/A'], ['Latitude', selectedFlight.latitude.toFixed(4)], ['Longitude', selectedFlight.longitude.toFixed(4)]] as [term, value] (term)}
+				<div class="flex flex-col gap-0.5">
+					<dt class="text-foreground-muted">{term}</dt>
+					<dd class="font-mono tabular-nums">{value}</dd>
+				</div>
+			{/each}
+			<div class="col-span-2 flex flex-col gap-0.5">
+				<dt class="text-foreground-muted">Vertical</dt>
+				<dd class="font-mono tabular-nums">{verticalRate(selectedFlight)}</dd>
 			</div>
-			<div>
-				<strong>Track:</strong>
-				{selectedFlight.track_deg !== null
-					? `${Math.round(selectedFlight.track_deg)}°`
-					: 'N/A'}
-			</div>
-			<div><strong>Squawk:</strong> {selectedFlight.squawk ?? 'N/A'}</div>
-			<div><strong>Latitude:</strong> {selectedFlight.latitude.toFixed(4)}</div>
-			<div><strong>Longitude:</strong> {selectedFlight.longitude.toFixed(4)}</div>
-			<div class="col-span-2"><strong>Vertical:</strong> {verticalRate(selectedFlight)}</div>
-		</div>
+		</dl>
 
 		{#if selectedFlight.emergency}
-			<div class="mb-2 rounded bg-red-900/40 px-2 py-1 text-sm text-red-200">
-				Emergency squawked: {selectedFlight.emergency}
-			</div>
+			<Alert.Root variant="error">
+				<Alert.Description>Emergency squawked: {selectedFlight.emergency}</Alert.Description
+				>
+			</Alert.Root>
 		{/if}
 
 		<div class="text-foreground-muted font-mono text-[11px]">
 			ICAO {selectedFlight.id.toUpperCase()} · position {positionAgeSeconds}s old
 		</div>
-	</div>
+	</Card.Root>
 {/if}

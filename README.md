@@ -183,7 +183,9 @@ airplanes.live or your own readsb). ADS-B is queried around a point rather than
 globally, so the client passes its viewport centre; requests are snapped to a
 quarter-degree grid server-side so nearby clients share one upstream fetch.
 Attribution must be preserved: `Earthquake data: USGS Earthquake Hazards
-Program` and `Flight data: adsb.lol community receiver network`.
+Program`, `Flight data: adsb.lol community receiver network`, and
+`Airports: OurAirports` (public domain; `data/airports.csv` is its
+`large_airport` set).
 
 Tiles are derived, colorized ORION products. Attribution must read: `Weather
 radar: NOAA/NWS NEXRAD processed by ORION`. The mosaic remains observational
@@ -191,4 +193,6 @@ decision-support data and should expose stale or incomplete source coverage to
 operators rather than implying uninterrupted official NOAA delivery.
 
 
-## [LICENSE](./LICENSE)
+## License
+
+ORION is released under the [MIT License](./LICENSE).

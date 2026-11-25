@@ -34,3 +34,10 @@ export const flightStore = writable<FlightStore>({
 	observedAt: 0,
 	positionAgeMs: 0
 });
+
+/**
+ * How much of the viewport the flight feed covered. A wide view is filled in
+ * by the server over a minute or so (`pending` circles still to come); past
+ * roughly a continent it stops, and the outermost parts stay empty.
+ */
+export const adsbCoverage = writable({ truncated: false, pending: 0, count: 0 });

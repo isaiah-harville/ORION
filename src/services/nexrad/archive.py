@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import bz2
 import os
 import re
+import struct
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -161,7 +163,107 @@ def _transfer_config() -> Any:
     )
 
 
-def download_scan(client: Any, bucket: str, scan: ScanObject, cache_dir: Path) -> Path:
+# Level II archive layout: a 24-byte volume header ("AR2V..."), then a run of
+# LDM records, each a 4-byte big-endian length (negative on the last) and a
+# bzip2 stream of 2432-byte message segments. Radials arrive in scan order, so
+# the lowest elevation -- the only one the mosaic reads -- is wholly contained
+# in the first few records.
+VOLUME_HEADER_BYTES = 24
+_MESSAGE_SEGMENT_BYTES = 2432
+_CTM_BYTES = 12
+_MESSAGE_HEADER_BYTES = 16
+# Offset of the elevation number inside a message 31 data header.
+_MESSAGE_31_ELEVATION_OFFSET = 22
+
+# A first sweep is typically 0.5-1.5 MB of a 3-10 MB volume, so a 1 MiB opening
+# range usually covers it in one request without overshooting by much.
+FIRST_SWEEP_FIRST_RANGE = 1 << 20
+FIRST_SWEEP_NEXT_RANGE = 512 << 10
+
+
+def _record_leaves_first_elevation(record: bytes) -> bool:
+    """Whether a decompressed LDM record holds a radial past elevation 1."""
+    offset = 0
+    while offset + _CTM_BYTES + _MESSAGE_HEADER_BYTES <= len(record):
+        header = offset + _CTM_BYTES
+        message_size = struct.unpack_from(">H", record, header)[0]
+        message_type = record[header + 3]
+        if message_type == 31:
+            body = header + _MESSAGE_HEADER_BYTES
+            if body + _MESSAGE_31_ELEVATION_OFFSET >= len(record):
+                return False
+            if record[body + _MESSAGE_31_ELEVATION_OFFSET] > 1:
+                return True
+            # message_size counts halfwords from the message header onward.
+            offset += _CTM_BYTES + max(message_size * 2, _MESSAGE_HEADER_BYTES)
+        else:
+            offset += _MESSAGE_SEGMENT_BYTES
+    return False
+
+
+def _get_range(
+    client: Any, bucket: str, key: str, start: int, end: int
+) -> tuple[bytes, int]:
+    response = client.get_object(Bucket=bucket, Key=key, Range=f"bytes={start}-{end}")
+    body = response["Body"].read()
+    content_range = response.get("ContentRange", "")
+    total = (
+        int(content_range.rsplit("/", 1)[-1])
+        if "/" in content_range
+        else start + len(body)
+    )
+    return body, total
+
+
+def fetch_first_sweep(client: Any, bucket: str, key: str) -> bytes | None:
+    """The volume truncated after the record that starts elevation 2.
+
+    The result is a valid, shorter archive file: the header plus whole LDM
+    records, which pyart reads like any other volume. Returns None when the
+    object does not look like a bzip2 record stream, so the caller can fall back
+    to fetching the whole file.
+    """
+    data, total = _get_range(client, bucket, key, 0, FIRST_SWEEP_FIRST_RANGE - 1)
+    buffer = bytearray(data)
+    if not buffer.startswith(b"AR2V"):
+        return None
+
+    def ensure(length: int) -> bool:
+        while len(buffer) < length and len(buffer) < total:
+            end = min(total, max(length, len(buffer) + FIRST_SWEEP_NEXT_RANGE)) - 1
+            chunk, _ = _get_range(client, bucket, key, len(buffer), end)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        return len(buffer) >= length
+
+    position = VOLUME_HEADER_BYTES
+    while position < total:
+        if not ensure(position + 4):
+            break
+        size = abs(struct.unpack_from(">i", buffer, position)[0])
+        end = position + 4 + size
+        if size == 0 or not ensure(end):
+            break
+        try:
+            record = bz2.decompress(bytes(buffer[position + 4 : end]))
+        except (OSError, ValueError):
+            return None
+        position = end
+        # Keep the record that crosses into elevation 2: it may still carry
+        # the last radials of the first sweep.
+        if _record_leaves_first_elevation(record):
+            break
+    return bytes(buffer[:position])
+
+
+def download_scan(
+    client: Any,
+    bucket: str,
+    scan: ScanObject,
+    cache_dir: Path,
+    first_sweep_only: bool = False,
+) -> Path:
     destination = (
         cache_dir
         / scan.station
@@ -169,12 +271,25 @@ def download_scan(client: Any, bucket: str, scan: ScanObject, cache_dir: Path) -
         / scan.key.rsplit("/", 1)[-1]
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # Files only ever appear here through the atomic rename below, so one that
+    # exists is complete -- a truncated first-sweep file is smaller than the
+    # listed size on purpose.
     if destination.is_file() and (
-        scan.size == 0 or destination.stat().st_size == scan.size
+        first_sweep_only or scan.size == 0 or destination.stat().st_size == scan.size
     ):
         return destination
 
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
-    client.download_file(bucket, scan.key, str(temporary), Config=_transfer_config())
+    partial = (
+        fetch_first_sweep(client, bucket, scan.key)
+        if first_sweep_only and "." not in scan.key.rsplit("/", 1)[-1]
+        else None
+    )
+    if partial is not None:
+        temporary.write_bytes(partial)
+    else:
+        client.download_file(
+            bucket, scan.key, str(temporary), Config=_transfer_config()
+        )
     os.replace(temporary, destination)
     return destination

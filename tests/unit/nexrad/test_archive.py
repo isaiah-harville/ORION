@@ -1,5 +1,9 @@
+import bz2
+import io
+import struct
 from datetime import UTC, datetime, timedelta
 
+from services.nexrad import archive
 from services.nexrad.archive import (
     ScanObject,
     parse_scan_object,
@@ -84,3 +88,54 @@ def test_select_will_not_trade_away_most_of_the_coverage() -> None:
     )
     assert anchor.minute == 0
     assert len(selected) == 10
+
+
+def _message_31(elevation: int) -> bytes:
+    """One CTM-prefixed message 31 carrying only an elevation number."""
+    body = bytearray(40)
+    body[22] = elevation
+    size_halfwords = (16 + len(body)) // 2
+    header = struct.pack(">HBB", size_halfwords, 0, 31) + bytes(12)
+    return bytes(12) + header + bytes(body)
+
+
+def _record(*elevations: int) -> bytes:
+    payload = bz2.compress(b"".join(_message_31(e) for e in elevations))
+    return struct.pack(">i", len(payload)) + payload
+
+
+class _RangeClient:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+        self.requested = 0
+
+    def get_object(self, Bucket: str, Key: str, Range: str) -> dict:
+        start, end = (int(v) for v in Range.removeprefix("bytes=").split("-"))
+        chunk = self.data[start : end + 1]
+        self.requested += len(chunk)
+        return {
+            "Body": io.BytesIO(chunk),
+            "ContentRange": f"bytes {start}-{start + len(chunk) - 1}/{len(self.data)}",
+        }
+
+
+def test_fetch_first_sweep_stops_after_the_record_entering_elevation_two(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(archive, "FIRST_SWEEP_FIRST_RANGE", 64)
+    monkeypatch.setattr(archive, "FIRST_SWEEP_NEXT_RANGE", 32)
+    header = b"AR2V0006." + bytes(15)
+    first, crossing, later = _record(1, 1), _record(1, 2), _record(2, 3)
+    filler = b"".join(_record(3) for _ in range(20))
+    data = header + first + crossing + later + filler
+    client = _RangeClient(data)
+
+    result = archive.fetch_first_sweep(client, "bucket", "KTLX20261125_000000_V06")
+
+    assert result == header + first + crossing
+    assert client.requested < len(data)
+
+
+def test_fetch_first_sweep_declines_non_archive_objects() -> None:
+    client = _RangeClient(b"\x1f\x8b" + bytes(100))
+    assert archive.fetch_first_sweep(client, "bucket", "key") is None

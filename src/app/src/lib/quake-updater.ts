@@ -1,16 +1,24 @@
 import * as maplibregl from 'maplibre-gl';
 import { buildApiUrl } from '#lib/api.js';
 import { quakeStore, type Quake } from '#lib/stores/quake-store.js';
+import { runWhenVisible } from '#lib/visibility.js';
 
 /** USGS regenerates its summary feeds about once a minute. */
 const REFRESH_MS = 60_000;
 
 let markers: Record<string, maplibregl.Marker> = {};
 let timer: ReturnType<typeof setTimeout> | undefined;
+let cancelDeferred: (() => void) | undefined;
 
-export function resetQuakeUpdater(): void {
+function cancelScheduled(): void {
 	if (timer !== undefined) clearTimeout(timer);
 	timer = undefined;
+	cancelDeferred?.();
+	cancelDeferred = undefined;
+}
+
+export function resetQuakeUpdater(): void {
+	cancelScheduled();
 	Object.values(markers).forEach((marker) => marker.remove());
 	markers = {};
 }
@@ -86,6 +94,10 @@ export async function loadQuakeData(
 	} catch (error) {
 		console.error('Earthquake fetch error:', error);
 	} finally {
-		timer = setTimeout(() => void loadQuakeData(map, fetchFn), REFRESH_MS);
+		cancelScheduled();
+		timer = setTimeout(() => {
+			timer = undefined;
+			cancelDeferred = runWhenVisible(() => void loadQuakeData(map, fetchFn));
+		}, REFRESH_MS);
 	}
 }

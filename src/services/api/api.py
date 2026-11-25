@@ -2,8 +2,11 @@ import os
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from services.adsb.api import router as adsb_router
+from services.airports.api import router as airports_router
+from services.api.demand import DemandMiddleware, demand_url
 from services.nexrad.api import router as radar_router
 from services.quakes.api import router as quakes_router
 from services.scans.get_stations import get_radars
@@ -11,9 +14,13 @@ from services.scans.get_stations import get_radars
 app = FastAPI(
     root_path="/api",
 )
+# A zoomed-out flight view is thousands of aircraft: megabytes of repetitive
+# JSON that compresses roughly tenfold.
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 app.include_router(radar_router)
 app.include_router(quakes_router)
 app.include_router(adsb_router)
+app.include_router(airports_router)
 
 _cors_origins = [
     origin.strip()
@@ -28,6 +35,11 @@ if _cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Unset (local dev, tests) means the producer is not listening for demand and
+# runs at its normal cadence, so there is nobody to tell.
+if demand_url():
+    app.add_middleware(DemandMiddleware, url=demand_url())
 
 
 @app.get("/")
