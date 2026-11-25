@@ -172,7 +172,11 @@ def _render_frame(
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
     metadata["tile_count"] = render_tile_pyramid(
-        grid, temporary, settings.minimum_zoom, settings.maximum_zoom
+        grid,
+        temporary,
+        settings.minimum_zoom,
+        settings.maximum_zoom,
+        workers=settings.compute_workers,
     )
     atomic_json(temporary / "metadata.json", metadata)
     os.replace(temporary, frames_directory / frame_id)
