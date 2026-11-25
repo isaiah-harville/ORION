@@ -3,6 +3,10 @@
 Installed as ``orion-nexrad``. Run with no arguments it publishes a frame every
 ``ORION_NEXRAD_INTERVAL_SECONDS``; ``--once`` produces a single frame, and
 ``--analysis-time`` rebuilds a frame for a past moment.
+
+With ``ORION_NEXRAD_DEMAND_PORT`` set it listens for demand pings from the API
+and slows to ``ORION_NEXRAD_IDLE_INTERVAL_SECONDS`` while nobody is using the
+app, waking immediately when someone comes back.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import os
 import time
 from datetime import UTC, datetime
 
+from services.nexrad.demand import DemandTracker, serve
 from services.nexrad.frames import produce_frame
 from services.nexrad.retention import prune_raw_scans
 from services.nexrad.settings import ProducerSettings
@@ -39,6 +44,10 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     settings = ProducerSettings.from_environment()
+    tracker: DemandTracker | None = None
+    if settings.demand_port and not (args.once or args.analysis_time):
+        tracker = DemandTracker(settings.idle_after_seconds)
+        serve(tracker, settings.demand_port)
 
     while True:
         started = time.monotonic()
@@ -65,9 +74,18 @@ def main() -> None:
         # sooner than the interval: volumes only land every few minutes, and
         # this is an unsigned public bucket, so polling harder buys no fresher
         # data and just spends NOAA's bandwidth.
-        remaining = settings.interval_seconds - (time.monotonic() - started)
-        if remaining > 0:
-            time.sleep(remaining)
+        if tracker is None or tracker.is_active():
+            remaining = settings.interval_seconds - (time.monotonic() - started)
+            if remaining > 0:
+                time.sleep(remaining)
+            continue
+        remaining = settings.idle_interval_seconds - (time.monotonic() - started)
+        LOGGER.info("No recent demand; next frame in %.0fs", max(0, remaining))
+        # A demand ping during the idle sleep starts the next cycle at once. If
+        # the newest scans are already in the last frame, that cycle costs one
+        # listing and finds the frame already published.
+        tracker.reset()
+        tracker.wait(remaining)
 
 
 if __name__ == "__main__":

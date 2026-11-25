@@ -4,6 +4,7 @@ import json
 import logging
 import shutil
 from datetime import UTC, datetime
+from typing import cast
 
 from services.nexrad.retention import prune_superseded_frames
 from services.nexrad.settings import ProducerSettings, configuration_hash
@@ -12,12 +13,18 @@ from services.nexrad.storage import atomic_json
 LOGGER = logging.getLogger("orion.nexrad.manifest")
 
 
+def _frame_time(frame: dict[str, object]) -> int:
+    return int(cast(int | str, frame["time"]))
+
+
 def publish_manifest(settings: ProducerSettings) -> None:
     """Rewrite the manifest the client animates from, and enforce retention.
 
-    Only frames of the current configuration are listed; the oldest beyond the
-    retention count are deleted, along with any frames left by a configuration
-    that is no longer current.
+    Only frames of the current configuration are listed. Frames older than the
+    history window before the newest are deleted -- by time, not count, since
+    the cadence slows while nobody is watching -- and the retention count stays
+    as a backstop. Frames left by a configuration that is no longer current are
+    deleted too.
     """
     frames_directory = settings.mosaic_directory / "frames"
     suffix = f"-{configuration_hash(settings)}"
@@ -29,7 +36,13 @@ def publish_manifest(settings: ProducerSettings) -> None:
             frame = json.loads(path.read_text())
             if isinstance(frame.get("id"), str) and frame["id"].endswith(suffix):
                 metadata.append(frame)
-    metadata.sort(key=lambda frame: int(frame["time"]))
+    metadata.sort(key=_frame_time)
+
+    if metadata:
+        oldest_kept = _frame_time(metadata[-1]) - settings.history.total_seconds()
+        while metadata and _frame_time(metadata[0]) < oldest_kept:
+            expired = metadata.pop(0)
+            shutil.rmtree(frames_directory / str(expired["id"]), ignore_errors=True)
 
     while len(metadata) > settings.retained_frames:
         expired = metadata.pop(0)

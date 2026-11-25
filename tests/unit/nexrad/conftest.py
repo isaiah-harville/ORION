@@ -19,10 +19,15 @@ DEFAULTS: dict[str, Any] = {
     "minimum_stations": 2,
     "maximum_range_km": 230,
     "interval_seconds": 300,
+    "idle_interval_seconds": 900,
+    "idle_after_seconds": 900,
+    "demand_port": 0,
+    "history": timedelta(hours=1),
     "retained_frames": 13,
     "ingest_workers": 8,
     "compute_workers": 2,
     "keep_raw_scans": False,
+    "first_sweep_only": False,
     "raw_retention": timedelta(seconds=1800),
 }
 

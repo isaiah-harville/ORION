@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pyproj import Transformer
@@ -152,7 +153,6 @@ def extract_lowest_reflectivity(
     sweep = 0
 
     dbz = np.ma.asarray(radar.get_field(sweep, field_name, copy=False))
-    latitude, longitude, altitude = radar.get_gate_lat_lon_alt(sweep)
     ranges = np.broadcast_to(
         np.asarray(radar.range["data"], dtype=np.float32), dbz.shape
     )
@@ -199,14 +199,52 @@ def extract_lowest_reflectivity(
         tzinfo=UTC,
     )
 
+    longitude, latitude, altitude = _valid_gate_locations(radar, valid)
     return GateScan(
         station=station,
         observed_at=observed_at,
         dbz=values[valid],
-        longitude=np.asarray(longitude, dtype=np.float64)[valid],
-        latitude=np.asarray(latitude, dtype=np.float64)[valid],
-        altitude_m=np.asarray(altitude, dtype=np.float32)[valid],
+        longitude=longitude,
+        latitude=latitude,
+        altitude_m=altitude,
         range_m=ranges[valid],
+    )
+
+
+def _valid_gate_locations(
+    radar: Any, valid: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Longitude, latitude and altitude of the gates the mosaic keeps.
+
+    pyart's get_gate_lat_lon_alt geolocates every gate of the sweep -- often
+    1.3 million, in several float64 intermediates -- when usually only a small
+    share survive the validity filter. This applies the same element-wise
+    transforms pyart uses (antenna geometry, then the radar-centred azimuthal
+    equidistant projection) to the surviving gates only, so the result is
+    identical at a fraction of the memory and time. The radar's own dtypes are
+    kept throughout (pyart works in float32), or the gates land a hair apart.
+    """
+    from pyart.core.transforms import antenna_to_cartesian, cartesian_to_geographic
+
+    rows, columns = np.nonzero(valid)
+    ranges_km = np.asarray(radar.range["data"])[columns] / 1000.0
+    azimuths = np.asarray(radar.azimuth["data"])[rows]
+    elevations = np.asarray(radar.elevation["data"])[rows]
+    x, y, z = antenna_to_cartesian(ranges_km, azimuths, elevations)
+
+    projparams = radar.projection.copy()
+    if projparams.pop("_include_lon_0_lat_0", False):
+        projparams["lon_0"] = radar.longitude["data"][0]
+        projparams["lat_0"] = radar.latitude["data"][0]
+    longitude, latitude = cartesian_to_geographic(x, y, projparams)
+    try:
+        altitude = radar.altitude["data"] + z
+    except ValueError:
+        altitude = np.mean(radar.altitude["data"]) + z
+    return (
+        np.asarray(longitude, dtype=np.float64),
+        np.asarray(latitude, dtype=np.float64),
+        np.asarray(altitude, dtype=np.float32),
     )
 
 
